@@ -1,0 +1,11 @@
+@UcakTakip.Api_HostAddress = http://localhost:5173
+//7111
+GET {{UcakTakip.Api_HostAddress}}
+
+
+
+
+
+Accept: application/json
+
+###a
