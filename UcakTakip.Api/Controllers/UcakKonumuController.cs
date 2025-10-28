@@ -14,12 +14,12 @@ public class UcakKonumuController : ControllerBase
 {
     private readonly AppDbContext _context; //Veritabanı işlemleri/erişimi için context
 
-    
+
     //AppDbContext'i otomatik olarak dependency injection (bağımlılık) yoluyla _context'e atayarak her metotta veri tabanına ulaşabiliriz.
     //!!Yani _context aslında veri tabanına erişmemizi sağlayan nesnedir. Artık SQL sorgusu yazmadan, kodla tablo işlemleri yapabileceğiz.
     public UcakKonumuController(AppDbContext context)
     {
-        _context = context; 
+        _context = context;
     }
 
 
@@ -32,7 +32,6 @@ public class UcakKonumuController : ControllerBase
         page = page < 1 ? 1 : page; //sayfa 1'den küçük olamaz
         pageSize = pageSize is > 1000 or < 1 ? 100 : pageSize; //sayfa başına kayıt sayısı 1-1000 arasında olmalı
 
-        //Sayfalama (pagination) için Skip ve Take kullanıyoruz. 
         //Kayıtları zaman sırasına göre getiriyoruz.
         //Böylece en eski kayıtlar önce gelir
         var q = _context.UcakKonumlari.OrderBy(x => x.TimestampUtc);
@@ -44,7 +43,7 @@ public class UcakKonumuController : ControllerBase
 
     //Bu metot ID'ye göre tek bir kaydın konum bilgisini getirir. GET: api/UcakKonumu/5
     [HttpGet("{id}")]
-    public async Task<ActionResult<UcakKonum>> GetUcakKonum(int id)
+    public async Task<ActionResult<UcakKonum>> GetUcakKonum(long id)
     {
         var ucakKonum = await _context.UcakKonumlari.FindAsync(id);
         if (ucakKonum == null)
@@ -54,13 +53,14 @@ public class UcakKonumuController : ControllerBase
         return ucakKonum;
     }
 
-    //Bu metot belirli bir uçuş planına (ucusPlaniId) ait en son konum kaydını getirir. GET: api/UcakKonumu/son-konum/3
+    //GET: api/UcakKonumu/son-konum/3
+    //Bu metot belirli bir uçuş planına (ucusPlaniId) ait en son konum kaydını getirir. Canlı görünüm için en son konumu tek sorguda çekiyorum
     [HttpGet("son-konum/{ucusPlaniId:int}")]
     public async Task<ActionResult<UcakKonum>> SonKonum(int ucusPlaniId)
     {
         //Belirli bir uçuş planına (ucusPlaniId) ait en son konum kaydını getirir.
         var sonKonum = await _context.UcakKonumlari
-            .Where(uk=>uk.UcusPlaniId == ucusPlaniId)
+            .Where(uk => uk.UcusPlaniId == ucusPlaniId)
             .OrderByDescending(uk => uk.TimestampUtc)
             .FirstOrDefaultAsync();
 
@@ -68,39 +68,41 @@ public class UcakKonumuController : ControllerBase
     }
 
 
-    //Bu metot belirli bir zaman aralığında (fromUtc, toUtc) ve belirli bir uçuş planına (ucusPlaniId) ait konum kayıtlarını getirir. GET: api/UcakKonumu/aralik?ucusPlaniId=3&fromUtc
-    //Sayfalama için page ve pageSize parametreleri de ekledik.
+    //GET: api/UcakKonumu/aralik?ucusPlaniId=3&fromUtc
+    //Sayfalama. Replay için UTC aralığında konum verisi veriyoruz
     [HttpGet("aralik")]
     public async Task<ActionResult<IEnumerable<UcakKonum>>> Aralik(
         [FromQuery] int ucusPlaniId,
         [FromQuery] DateTime fromUtc,
-        [FromQuery] DateTime toUtc,    
-        [FromQuery] int page =1,
+        [FromQuery] DateTime toUtc,
+        [FromQuery] int page = 1,
         [FromQuery] int pageSize = 1000)
     {
         if (fromUtc > toUtc) return BadRequest("fromUtc, toUtc'dan büyük olamaz.");
 
         var q = _context.UcakKonumlari
-            .Where(uk=> uk.UcusPlaniId ==ucusPlaniId && uk.TimestampUtc >= fromUtc && uk.TimestampUtc <= toUtc)
-            .OrderBy(uk=> uk.TimestampUtc); //Zaman sırasına göre sırala
+            .Where(uk => uk.UcusPlaniId == ucusPlaniId && uk.TimestampUtc >= fromUtc && uk.TimestampUtc <= toUtc)
+            .OrderBy(uk => uk.TimestampUtc); //Zaman sırasına göre sırala
 
         var data = await q.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(); //sayfalama işlemi
         return data;
 
     }
 
-
-    //Bu metot Frontend'den form gönderildiğinde (yeni bir uçak konum kaydı ekler.) POST: api/UcakKonumu
+    //POST: api/UcakKonumu
+    //Bu metot Frontend'den form gönderildiğinde (yeni bir uçak konum kaydı ekler.) 
     [HttpPost, ApiKey]
     public async Task<ActionResult<UcakKonum>> PostUcakKonumu(UcakKonum konum)
     {
-        if(!ModelState.IsValid)
-            return ValidationProblem(ModelState); //Model doğrulaması başarısız ise 400 Bad Request döner.
+        if (!ModelState.IsValid)
+            return ValidationProblem(ModelState);  
+  
+        konum.TimestampUtc = DateTime.SpecifyKind(konum.TimestampUtc, DateTimeKind.Utc); //Zaman bilgisini UTC olarak ayarla.
 
         _context.UcakKonumlari.Add(konum);
-        await _context.SaveChangesAsync();  //SQL'e ekleme işlemi burada gerçekleşir.
+        await _context.SaveChangesAsync();  
 
-        return CreatedAtAction(nameof(GetUcakKonum), new {id = konum.Id }, konum);  //ekleme başarılı ise 201 Created döner ve eklenen veriyi geri gönderir.
+        return CreatedAtAction(nameof(GetUcakKonum), new { id = konum.Id }, konum);  //ekleme başarılı ise 201 Created döner ve eklenen veriyi geri gönderir.
     }
 
     //Uçuşun konum bilgisini değiştirmek veya düzeltmek istersek PUT: api/UcakKonumu/5
@@ -117,9 +119,9 @@ public class UcakKonumuController : ControllerBase
             await _context.SaveChangesAsync(); //hata yoksa SQL'e güncelleme işlemi burada gerçekleşir.
 
         }
-        catch (DbUpdateConcurrencyException) 
-        { 
-            if (!_context.UcakKonumlari.Any(e=> e.Id == id)) 
+        catch (DbUpdateConcurrencyException)
+        {
+            if (!_context.UcakKonumlari.Any(e => e.Id == id))
                 return NotFound(); //Eğer kayıt yoksa 404 Not Found döner.
             else
                 throw; //Başka bir hata varsa hatayı fırlatır.
@@ -135,13 +137,77 @@ public class UcakKonumuController : ControllerBase
     public async Task<IActionResult> DeleteUcakKonumu(int id)
     {
         var konum = await _context.UcakKonumlari.FindAsync(id);
-        if(konum==null)
+        if (konum == null)
             return NotFound(); //Kayıt yoksa 404 Not Found döner.
 
         _context.UcakKonumlari.Remove(konum);
         await _context.SaveChangesAsync(); //SQL'den silme işlemi burada gerçekleşir.
         return NoContent(); //Başarılı silme işleminden sonra 204 No Content döner.
 
+    }
+
+
+    //Toplu veri eklemek için kullanılacak model
+    public class UcakKonumInput
+    {
+        public int UcusPlaniId { get; set; }
+        public DateTime TimestampUtc { get; set; }
+        public double Latitude { get; set; }
+        public double Longitude { get; set; }
+        public double? Altitude { get; set; }
+        public double? Heading { get; set; }
+    }
+
+    [HttpPost("toplu"), ApiKey]
+    public async Task<IActionResult> PostUcakKonumuToplu([FromBody] List<UcakKonumInput> items)
+    {
+        if (items == null || items.Count == 0)
+            return BadRequest("Boş liste.");
+
+        // Basit doğrulamalar
+        foreach (var it in items)
+        {
+            if (it.Latitude is < -90 or > 90) return BadRequest("Latitude aralık dışı.");
+            if (it.Longitude is < -180 or > 180) return BadRequest("Longitude aralık dışı.");
+        }
+
+        var entities = items.Select(it => new UcakKonum
+        {
+            UcusPlaniId = it.UcusPlaniId,
+            TimestampUtc = DateTime.SpecifyKind(it.TimestampUtc, DateTimeKind.Utc),
+            Latitude = it.Latitude,
+            Longitude = it.Longitude,
+            Altitude = it.Altitude,
+            Heading = it.Heading
+        }).ToList();
+
+        _context.UcakKonumlari.AddRange(entities);
+        await _context.SaveChangesAsync();
+
+        return Ok(new { inserted = entities.Count });
+    }
+
+    /*[
+    { "ucusPlaniId": 5, "timestampUtc": "2025-10-28T07:00:00Z", "latitude": 41.0, "longitude": 28.9 },
+    { "ucusPlaniId": 5, "timestampUtc": "2025-10-28T07:01:00Z", "latitude": 41.05, "longitude": 28.95 }
+    ]*/
+
+    //------------------------------------------------------------------------------------------------------------------------------------
+    // Tüm konumları uçuş planı bazında temizle
+    // DELETE: api/UcakKonumu/plan/{ucusPlaniId}
+    [HttpDelete("plan/{ucusPlaniId:int}"), ApiKey]
+    public async Task<IActionResult> DeleteByPlan(int ucusPlaniId)
+    {
+        var list = await _context.UcakKonumlari
+            .Where(x => x.UcusPlaniId == ucusPlaniId)
+            .ToListAsync();
+
+        if (list.Count == 0)
+            return Ok(new { deleted = 0 });
+
+        _context.UcakKonumlari.RemoveRange(list);
+        await _context.SaveChangesAsync();
+        return Ok(new { deleted = list.Count });
     }
 
 

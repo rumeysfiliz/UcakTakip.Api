@@ -18,37 +18,74 @@ public class UcusPlaniController : ControllerBase
         _context = context;
     }
 
-    // GET: api/UcusPlani
-    // Tüm uçuş planlarını listelemek için. Frontend bu veriyi alıp haritada gösterir.
-    // UcusPlani ile ilişkili UcakKonum kayıtlarını da dahil ederiz. Böylece tek seferde tüm uçuş ve konum verisini alırız. 
-    // Bu, performans açısından daha iyidir çünkü her uçuş için ayrı ayrı konum sorgusu yapmamıza gerek kalmaz.
-    //  Include(u => u.UcakKonumlari) ifadesi, EF Core'a UcusPlani ile ilişkili UcakKonum kayıtlarını da yüklemesini söyler. 
-    [HttpGet]
-    public async Task<ActionResult<IEnumerable<UcusPlani>>> GetUcusPlanlari()
+   
+    // Yardımcılar
+    // Gelen/saklanan DateTime'ların UTC olduğundan emin olmak (dönüşüm yap)
+    private static DateTime AsUtc(DateTime dt)
     {
-        var list = await _context.UcusPlanlari
-                        .Include(u => u.UcakKonumlari) //İlişkili UcakKonum kayıtlarını da getir
-            .ToListAsync();
-        return list;
+        if (dt.Kind == DateTimeKind.Utc) return dt;
+        // Unspecified veya Local geldiyse, yerel varsay → UTC'ye çevir
+        var local = DateTime.SpecifyKind(dt, DateTimeKind.Local);
+        return local.ToUniversalTime();
+    }
+    //Böylece sistemdeki herkes hangi ülkeden olursa olsun aynı referans zamanı üzerinden çalışabilir.
+
+    private static DateTime? AsUtc(DateTime? dt)
+        => dt.HasValue ? AsUtc(dt.Value) : (DateTime?)null;
+
+    //Gelen veriyi düzenli hale getirmek için (Örn: kodu büyük harfe çevir, boşlukları temizle, tarihleri UTC yap). ("Trim boşlukları siliyor. "ToUpperInvariant" büyük harfe çeviriyor. "AsUtc" Utc çeviriyor.)
+    private static void Normalize(UcusPlani p)
+    {
+        p.Code = (p.Code ?? string.Empty).Trim().ToUpperInvariant();
+        p.Origin = (p.Origin ?? string.Empty).Trim().ToUpperInvariant();
+        p.Destination = (p.Destination ?? string.Empty).Trim().ToUpperInvariant();
+        p.StartTimeUtc = AsUtc(p.StartTimeUtc);
+        p.EndTimeUtc = AsUtc(p.EndTimeUtc);
     }
 
 
+    //------------------------------------------------------------------------------------------------------------------
+    // GET: api/UcusPlani
+    // /api/UcusPlani?includePositions=true => konumları da dahil et
+    // Tüm uçuş planlarını listelemek için. Frontend bu veriyi alıp haritada gösterir.
+    [HttpGet]
+    public async Task<ActionResult<IEnumerable<UcusPlani>>> GetUcusPlanlari([FromQuery] bool includePositions = false)
+    {
+        IQueryable<UcusPlani> query = _context.UcusPlanlari.AsNoTracking(); //AsNoTracking: Sadece okuyorum değiştirmeyeceğim demek, performans için önemli.
+
+
+        if (includePositions)
+            query = query.Include(u => u.UcakKonumlari); //UcusPlani ile lişkili UcakKonum kayıtlarını da dahil et. Böylece her planla birlikte o planın tüm konum listesini de getirir. Tek seferde biter.
+
+
+        var list = await query
+        .OrderByDescending(u => u.StartTimeUtc) //En yeni planlar önce gelsin
+        .ToListAsync(); //Listeyi al
+
+
+        return Ok(list); //Listeyi döner
+
+    }
+
+    //------------------------------------------------------------------------------------------------------------------
     // GET: api/UcusPlani/5
     // Belirli bir uçuş planının detayını görmek için (detay sayfası) 
     // İlişkili UcakKonum kayıtlarını da dahil ederiz.
+
     [HttpGet("{id}")]
     public async Task<ActionResult<UcusPlani>> GetUcusPlani(int id)
     {
         var ucusPlani = await _context.UcusPlanlari
-                            .Include(u => u.UcakKonumlari) //İlişkili UcakKonum kayıtlarını da getir
+                            .Include(u => u.UcakKonumlari) //uçuş planı ile ilişkili konumları da dahil eDEREK GETİR.
                             .FirstOrDefaultAsync(u => u.Id == id); //Belirli ID'ye sahip uçuş planını getir
 
         if (ucusPlani == null)
-            return NotFound();
+            return NotFound(); //Yoksa 404 döneriz
         return ucusPlani;  //Uçuş planını ve ilişkili konumları döner 
     }
 
 
+    //------------------------------------------------------------------------------------------------------------------
     // POST: api/UcusPlani
     // Yeni bir uçuş planı eklemek için kullanılır. Frontend'den form ile veri gelir.
     [HttpPost]
@@ -61,9 +98,10 @@ public class UcusPlaniController : ControllerBase
         if (string.IsNullOrWhiteSpace(ucusPlani.Origin) || string.IsNullOrWhiteSpace(ucusPlani.Destination))
             return BadRequest("Origin ve Destination boş olamaz."); //Kalkış ve varış boş olamaz
 
-        // Aynı Code ve StartTimeUtc'ya sahip bir uçuş planı zaten var mı kontrol et
+        Normalize(ucusPlani); //Veriyi düzenli hale getir
+        ucusPlani.CreatedAtUtc = DateTime.UtcNow; //Kayıt zamanını şu an UTC(dünya saati) yap
 
-        _context.UcusPlanlari.Add(ucusPlani); //Yeni uçuş planını ekle
+        _context.UcusPlanlari.Add(ucusPlani); //Veriyi eklemeye hazırla (henüz eklemiyor bellekte bekliyor!)
 
 
         await _context.SaveChangesAsync(); //Değişiklikleri kaydet (SQL'e ekleme işlemi burada gerçekleşir)
@@ -71,14 +109,15 @@ public class UcusPlaniController : ControllerBase
         return CreatedAtAction(nameof(GetUcusPlani), new { id = ucusPlani.Id }, ucusPlani); //201 Created döner ve eklenen veriyi geri gönderir 
     }
 
+    //------------------------------------------------------------------------------------------------------------------
     // PUT: api/UcusPlani/5
     // Mevcut bir uçuş planını güncellemek için kullanılır.
     [HttpPut("{id}")]
-    public async Task<IActionResult> PutUcusPlani(int id , UcusPlani ucusPlani)
+    public async Task<IActionResult> PutUcusPlani(int id, UcusPlani ucusPlani)
     {
-        if (id !=ucusPlani.Id)
+        if (id != ucusPlani.Id)
             return BadRequest("Routeden gelen ID ile veri içindeki ID uyuşmuyor."); //ID'ler uyuşmuyorsa 400 Bad Request döner.
-        
+
 
         if (ucusPlani.EndTimeUtc.HasValue && ucusPlani.EndTimeUtc < ucusPlani.StartTimeUtc)
             return BadRequest("EndTimeUtc, StartTimeUtc'dan küçük olamaz."); //Bitiş zamanı, başlangıçtan küçük olamaz
@@ -86,32 +125,26 @@ public class UcusPlaniController : ControllerBase
         if (string.IsNullOrWhiteSpace(ucusPlani.Origin) || string.IsNullOrWhiteSpace(ucusPlani.Destination))
             return BadRequest("Origin ve Destination boş olamaz."); //Kalkış ve varış boş olamaz
 
+        var entity = await _context.UcusPlanlari.FirstOrDefaultAsync(u => u.Id == id); //Veri tabanından mevcut kaydı al
+        if (entity == null) return NotFound();
 
-        //!!!!!!!!DÜZENLİCEZ BURAYI !!!!!!!!!!
+        Normalize(ucusPlani);
+        // Mevcut kaydı tek tek set et, güncelle.
+        entity.Code = ucusPlani.Code;
+        entity.Origin = ucusPlani.Origin;
+        entity.Destination = ucusPlani.Destination;
+        entity.StartTimeUtc = ucusPlani.StartTimeUtc;
+        entity.EndTimeUtc = ucusPlani.EndTimeUtc;
 
-        //Detached -> yani EF bu nesnenin önceden veri tabanında olduğunu bilmiyor.
-        //Bu ucusPlani nesnesi veri tabanından gelmedi, frontend'den gelen yeni bir kopya.
-        //modified yaparsak EF bunu güncelleme olarak algılar ve tüm alanları günceller. yani ef önce bul sonra güncelle adımlarını atlıyor.
-        _context.Entry(ucusPlani).State = EntityState.Modified; //Veriyi güncelleme moduna al
+        if (entity.EndTimeUtc.HasValue && entity.EndTimeUtc < entity.StartTimeUtc)
+            return BadRequest("EndTimeUtc, StartTimeUtc'dan küçük olamaz.");
 
-        try
-        {
-            await _context.SaveChangesAsync(); //Update db
-        }
-        catch(DbUpdateConcurrencyException)         {
-            //Eğer güncelleme sırasında veri bulunamazsa (başka bir yerde silinmiş olabilir) 404 döneriz.
-            var exists = await _context.UcusPlanlari.AnyAsync(u => u.Id == id); 
-            if (!exists)
-                return NotFound();
-            else
-                throw; //Başka bir hata varsa hatayı fırlat
-
-        }
-        return NoContent(); //Başarılı güncelleme sonrası 204 No Content döneriz
+        await _context.SaveChangesAsync();
+        return NoContent();
 
     }
 
-
+    //------------------------------------------------------------------------------------------------------------------
     // DELETE: api/UcusPlani/5
     // Kayıt silme işlemi için örnek iptal edilen plan
     [HttpDelete("{id}")]
@@ -119,7 +152,7 @@ public class UcusPlaniController : ControllerBase
     {
         //İlk önce uçuş planı var mı kontrol et
         var ucusPlani = await _context.UcusPlanlari.FindAsync(id);
-        if(ucusPlani == null) 
+        if (ucusPlani == null)
             return NotFound(); //Yoksa 404 döneriz
 
         _context.UcusPlanlari.Remove(ucusPlani); //Uçuş planını sil
@@ -128,34 +161,40 @@ public class UcusPlaniController : ControllerBase
     }
 
 
-    //----------------------------------------------------------------
-    //----------------------------------------------------------------
-
+    //------------------------------------------------------------------------------------------------------------------
     //Get: api/UcusPlani(ara?origin=IST&destination=*
     // Uçuş planlarını kalkış ve varışa göre aramak için
     [HttpGet("ara")]
     public async Task<ActionResult<IEnumerable<UcusPlani>>> Ara(
         [FromQuery] string? origin,
         [FromQuery] string? destination,
-        [FromQuery] bool includePositions =false) //Konumları da dahil etme opsiyonu
+        [FromQuery] bool includePositions = false) //Konumları da dahil etme opsiyonu
     {
-        IQueryable<UcusPlani> up = _context.UcusPlanlari;
+        IQueryable<UcusPlani> up = _context.UcusPlanlari.AsNoTracking(); //AsNoTracking: Sadece okuyorum değiştirmeyeceğim demek, performans için önemli.
 
-        //ToLower ile büyük küçük harf duyarsız arama yapıyoruz. 
+        if (!string.IsNullOrWhiteSpace(origin)) //origin parametresi boş değilse filtre uygula. örneğin "Origin = IST"
+        {
+            var o = origin.Trim().ToUpperInvariant();
+            up = up.Where(u => u.Origin != null && u.Origin.ToUpper() == o); 
+        }
+        if (!string.IsNullOrWhiteSpace(destination)) //destination parametresi boş değilse filtre uygula. örneğin "Destination = LAX"
+        {
+            var d = destination.Trim().ToUpperInvariant();
+            up = up.Where(u => u.Destination != null && u.Destination.ToUpper() == d);
+        }
+        if (includePositions) //Konumları da dahil etme opsiyonu
+            up = up.Include(u => u.UcakKonumlari);
 
-        if (!string.IsNullOrWhiteSpace(origin))
-            up = up.Where(u => u.Origin != null && u.Origin.ToLower() == origin.ToLower()); //Kalkış yeri filtrele
-        if (!string.IsNullOrWhiteSpace(destination))
-            up = up.Where(u => u.Destination != null && u.Destination.ToLower() == destination.ToLower()); //Varış yeri filtrele
-        if (includePositions) 
-            up = up.Include(u => u.UcakKonumlari); //İlişkili UcakKonum kayıtlarını da getir
-        var data = await up.ToListAsync();
-        return data;
+        var data = await up.OrderByDescending(x => x.StartTimeUtc).ToListAsync();
+        return data; //Veriyi JSON olarak döner
 
     }
+    /*Sadece İstanbul kalkışlı uçuşları getir	/api/UcusPlani/ara?origin=IST
+    İstanbul → Antalya uçuşlarını getir	        /api/UcusPlani/ara?origin=IST&destination=AYT
+    İstanbul → Antalya, konumlarıyla beraber	/api/UcusPlani/ara?origin=IST&destination=AYT&includePositions=true*/
 
 
-
+    //------------------------------------------------------------------------------------------------------------------
     //GET: api/UcusPlani/tarih?baslangıc=2025-10-01T00:00:00Z&bitis=2025-10-31T23:59:59Z
     // Belirli bir tarih aralığındaki uçuş planlarını getirmek için 
 
@@ -163,15 +202,17 @@ public class UcusPlaniController : ControllerBase
     public async Task<ActionResult<IEnumerable<UcusPlani>>> TarihAraligi(
         [FromQuery] DateTime baslangic,
         [FromQuery] DateTime bitis,
-        [FromQuery] bool includePositions = false) //Konumları da dahil etme opsiyonu)
+        [FromQuery] bool includePositions = false) //Konumları da dahil etmek için opsiyon
     {
-        if (bitis < baslangic)
-            return BadRequest("Bitiş tarihi başlangıçtan küçük olamaz.");
+        var b1 = AsUtc(baslangic); //Kullanıcı hangi saat diliminden gönderirse göndersin, UTC’ye çeviriyoruz. Böylece “yaz/kış saati, ülke farkı” gibi karışıklıklar olmaz.
+        var b2 = AsUtc(bitis);
+        if (b2 < b1) return BadRequest("Bitiş tarihi başlangıçtan küçük olamaz.");
 
-        IQueryable<UcusPlani> up = _context.UcusPlanlari.Where(u => u.StartTimeUtc >= baslangic && u.StartTimeUtc <= bitis); //Tarih aralığını filtrele
+        IQueryable<UcusPlani> up = _context.UcusPlanlari.AsNoTracking()
+            .Where(u => u.StartTimeUtc >= b1 && u.StartTimeUtc <= b2);
 
-        if(includePositions)
-            up = up.Include(u => u.UcakKonumlari); //İlişkili UcakKonum kayıtlarını da getir
+        if (includePositions)
+            up = up.Include(u => u.UcakKonumlari);
 
         var data = await up.ToListAsync();
         return data;

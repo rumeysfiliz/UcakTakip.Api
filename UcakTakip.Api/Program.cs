@@ -20,7 +20,7 @@ builder.Services.AddCors(o => o.AddPolicy("ui", p =>
 //Bu options ile DbContext'e baðlantý bilgisini veriyoruz. AppDbContext sýnýfýnda. 
 
 builder.Services.AddDbContext<AppDbContext>(opt =>
-    opt.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+    opt.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection"))); //EF Baðlantýusý
 
 builder.Services.AddControllers();
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle

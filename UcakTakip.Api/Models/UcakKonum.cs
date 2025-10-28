@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
-using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;          
 
 
 
@@ -12,7 +12,7 @@ public class UcakKonum
 {
 
     //Çok sayıda kayıt olacağı için PK'yi long seçtik daha güvenli.
-    [Required]
+    [Key]
     public long Id { get; set; }
 
 
@@ -26,8 +26,14 @@ public class UcakKonum
 
 
     //Zaman bilgisi : Slider/re-play için önemli
+    private DateTime _timestampUtc;
     [Required]
-    public DateTime TimestampUtc { get; set; }
+    public DateTime TimestampUtc
+    {
+        get => DateTime.SpecifyKind(_timestampUtc, DateTimeKind.Utc);
+        set => _timestampUtc = DateTime.SpecifyKind(value, DateTimeKind.Utc);
+    }
+
 
     //Koordinatlar (Enlem/Boylam) (Leaflet/OpenStreetMap ile direk uyumludur)
     [Range(-90, 90)] 
@@ -37,6 +43,7 @@ public class UcakKonum
     public double Longitude { get; set; } //Boylam (-180 ile 180 arasında)
 
     //Yön bilgisi (0-360 derece)
+    [Range(0, 15000)]
     public double? Altitude { get; set; } //İrtifa (metre cinsinden)
 
     [Range(0, 360)]
