@@ -33,10 +33,15 @@ public class UcusPlani
         set => _endTimeUtc = value.HasValue ? DateTime.SpecifyKind(value.Value, DateTimeKind.Utc) : (DateTime?)null;
     }
 
-    [Required]
+    //[Required]
     public string Origin { get; set; } = string.Empty; //Kalkış yeri
-    [Required]
+    //[Required]
     public string Destination { get; set; } = string.Empty; //Varış yeri
+
+    [Range(-90, 90)] public double? OriginLat { get; set; } //enlem
+    [Range(-180, 180)] public double? OriginLng { get; set; } //boylam
+    [Range(-90, 90)] public double? DestinationLat { get; set; }
+    [Range(-180, 180)] public double? DestinationLng { get; set; }
 
     //Kayıt zaman bilgisi (log ve sıralama için
     private DateTime _createdAtUtc = DateTime.UtcNow;

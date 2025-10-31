@@ -37,8 +37,14 @@ public class UcusPlaniController : ControllerBase
     private static void Normalize(UcusPlani p)
     {
         p.Code = (p.Code ?? string.Empty).Trim().ToUpperInvariant();
-        p.Origin = (p.Origin ?? string.Empty).Trim().ToUpperInvariant();
-        p.Destination = (p.Destination ?? string.Empty).Trim().ToUpperInvariant();
+        // Eğer koordinat sistemine geçildiyse, bunlara dokunmaya gerek yok.
+        // (İstersen test için tut, ama boş gelebilir.)
+        if (!string.IsNullOrWhiteSpace(p.Origin))
+            p.Origin = p.Origin.Trim().ToUpperInvariant();
+
+        if (!string.IsNullOrWhiteSpace(p.Destination))
+            p.Destination = p.Destination.Trim().ToUpperInvariant();
+
         p.StartTimeUtc = AsUtc(p.StartTimeUtc);
         p.EndTimeUtc = AsUtc(p.EndTimeUtc);
     }
@@ -95,8 +101,15 @@ public class UcusPlaniController : ControllerBase
         if (ucusPlani.EndTimeUtc.HasValue && ucusPlani.EndTimeUtc < ucusPlani.StartTimeUtc)
             return BadRequest("EndTimeUtc, StartTimeUtc'dan küçük olamaz."); //Bitiş zamanı, başlangıçtan küçük olamaz
 
-        if (string.IsNullOrWhiteSpace(ucusPlani.Origin) || string.IsNullOrWhiteSpace(ucusPlani.Destination))
-            return BadRequest("Origin ve Destination boş olamaz."); //Kalkış ve varış boş olamaz
+
+        if (ucusPlani.OriginLat < -90 || ucusPlani.OriginLat >90)
+            return BadRequest("Kalkış enlemi [-90, 90] aralığında olmalı.");
+        if (ucusPlani.DestinationLat < -90 || ucusPlani.DestinationLat > 90)
+            return BadRequest("Varış enlemi [-90, 90] aralığında olmalı.");
+        if (ucusPlani.OriginLat < -180 || ucusPlani.OriginLat > 180)
+            return BadRequest("Kalkış boylamı [-180, 180] aralığında olmalı.");
+        if (ucusPlani.DestinationLat < -180 || ucusPlani.DestinationLat > 180)
+            return BadRequest("Varış boylamı [-180, 180] aralığında olmalı.");
 
         Normalize(ucusPlani); //Veriyi düzenli hale getir
         ucusPlani.CreatedAtUtc = DateTime.UtcNow; //Kayıt zamanını şu an UTC(dünya saati) yap
@@ -122,8 +135,14 @@ public class UcusPlaniController : ControllerBase
         if (ucusPlani.EndTimeUtc.HasValue && ucusPlani.EndTimeUtc < ucusPlani.StartTimeUtc)
             return BadRequest("EndTimeUtc, StartTimeUtc'dan küçük olamaz."); //Bitiş zamanı, başlangıçtan küçük olamaz
 
-        if (string.IsNullOrWhiteSpace(ucusPlani.Origin) || string.IsNullOrWhiteSpace(ucusPlani.Destination))
-            return BadRequest("Origin ve Destination boş olamaz."); //Kalkış ve varış boş olamaz
+        if (ucusPlani.OriginLat < -90 || ucusPlani.OriginLat > 90)
+            return BadRequest("Kalkış enlemi [-90, 90] aralığında olmalı.");
+        if (ucusPlani.DestinationLat < -90 || ucusPlani.DestinationLat > 90)
+            return BadRequest("Varış enlemi [-90, 90] aralığında olmalı.");
+        if (ucusPlani.OriginLat < -180 || ucusPlani.OriginLat > 180)
+            return BadRequest("Kalkış boylamı [-180, 180] aralığında olmalı.");
+        if (ucusPlani.DestinationLat < -180 || ucusPlani.DestinationLat > 180)
+            return BadRequest("Varış boylamı [-180, 180] aralığında olmalı.");
 
         var entity = await _context.UcusPlanlari.FirstOrDefaultAsync(u => u.Id == id); //Veri tabanından mevcut kaydı al
         if (entity == null) return NotFound();
@@ -131,13 +150,13 @@ public class UcusPlaniController : ControllerBase
         Normalize(ucusPlani);
         // Mevcut kaydı tek tek set et, güncelle.
         entity.Code = ucusPlani.Code;
-        entity.Origin = ucusPlani.Origin;
-        entity.Destination = ucusPlani.Destination;
+        entity.OriginLat = ucusPlani.OriginLat;
+        entity.DestinationLat = ucusPlani.DestinationLat;
         entity.StartTimeUtc = ucusPlani.StartTimeUtc;
         entity.EndTimeUtc = ucusPlani.EndTimeUtc;
 
         if (entity.EndTimeUtc.HasValue && entity.EndTimeUtc < entity.StartTimeUtc)
-            return BadRequest("EndTimeUtc, StartTimeUtc'dan küçük olamaz.");
+            return BadRequest("Bitiş zamanı, başlangıç zamanından küçük olamaz.");
 
         await _context.SaveChangesAsync();
         return NoContent();
@@ -161,40 +180,7 @@ public class UcusPlaniController : ControllerBase
     }
 
 
-    //------------------------------------------------------------------------------------------------------------------
-    //Get: api/UcusPlani(ara?origin=IST&destination=*
-    // Uçuş planlarını kalkış ve varışa göre aramak için
-    [HttpGet("ara")]
-    public async Task<ActionResult<IEnumerable<UcusPlani>>> Ara(
-        [FromQuery] string? origin,
-        [FromQuery] string? destination,
-        [FromQuery] bool includePositions = false) //Konumları da dahil etme opsiyonu
-    {
-        IQueryable<UcusPlani> up = _context.UcusPlanlari.AsNoTracking(); //AsNoTracking: Sadece okuyorum değiştirmeyeceğim demek, performans için önemli.
-
-        if (!string.IsNullOrWhiteSpace(origin)) //origin parametresi boş değilse filtre uygula. örneğin "Origin = IST"
-        {
-            var o = origin.Trim().ToUpperInvariant();
-            up = up.Where(u => u.Origin != null && u.Origin.ToUpper() == o); 
-        }
-        if (!string.IsNullOrWhiteSpace(destination)) //destination parametresi boş değilse filtre uygula. örneğin "Destination = LAX"
-        {
-            var d = destination.Trim().ToUpperInvariant();
-            up = up.Where(u => u.Destination != null && u.Destination.ToUpper() == d);
-        }
-        if (includePositions) //Konumları da dahil etme opsiyonu
-            up = up.Include(u => u.UcakKonumlari);
-
-        var data = await up.OrderByDescending(x => x.StartTimeUtc).ToListAsync();
-        return data; //Veriyi JSON olarak döner
-
-    }
-    /*Sadece İstanbul kalkışlı uçuşları getir	/api/UcusPlani/ara?origin=IST
-    İstanbul → Antalya uçuşlarını getir	        /api/UcusPlani/ara?origin=IST&destination=AYT
-    İstanbul → Antalya, konumlarıyla beraber	/api/UcusPlani/ara?origin=IST&destination=AYT&includePositions=true*/
-
-
-    //------------------------------------------------------------------------------------------------------------------
+    //-----------------------------------------------------------------------------------------------------------------
     //GET: api/UcusPlani/tarih?baslangıc=2025-10-01T00:00:00Z&bitis=2025-10-31T23:59:59Z
     // Belirli bir tarih aralığındaki uçuş planlarını getirmek için 
 
