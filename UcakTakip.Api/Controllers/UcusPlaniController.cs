@@ -37,8 +37,8 @@ public class UcusPlaniController : ControllerBase
     private static void Normalize(UcusPlani p)
     {
         p.Code = (p.Code ?? string.Empty).Trim().ToUpperInvariant();
-        // Eğer koordinat sistemine geçildiyse, bunlara dokunmaya gerek yok.
-        // (İstersen test için tut, ama boş gelebilir.)
+        // Koordinat sistemine geçildiği, bunlara dokunmaya gerek yok.
+        // (Test için tut, ama boş gelebilir.)
         if (!string.IsNullOrWhiteSpace(p.Origin))
             p.Origin = p.Origin.Trim().ToUpperInvariant();
 
@@ -113,6 +113,30 @@ public class UcusPlaniController : ControllerBase
 
         Normalize(ucusPlani); //Veriyi düzenli hale getir
         ucusPlani.CreatedAtUtc = DateTime.UtcNow; //Kayıt zamanını şu an UTC(dünya saati) yap
+
+        // Eğer varış zamanı girilmemişse otomatik tahmini süre hesapla. Haversan Formülü. İki nokta arasındaki kuş uçusu mesafeyi(km) hesaplar. Sabit tanımlanan hıza göre. Süre = Mesafe/Hız --- EndTimeUtc = StartTimeUtc + süre şeklinde oto doldurur 
+        if (!ucusPlani.EndTimeUtc.HasValue &&
+            ucusPlani.OriginLat.HasValue && ucusPlani.OriginLng.HasValue &&
+            ucusPlani.DestinationLat.HasValue && ucusPlani.DestinationLng.HasValue)
+        {
+            double R = 6371; // Dünya yarıçapı (km)
+            double dLat = (ucusPlani.DestinationLat.Value - ucusPlani.OriginLat.Value) * Math.PI / 180;
+            double dLon = (ucusPlani.DestinationLng.Value - ucusPlani.OriginLng.Value) * Math.PI / 180;
+
+            double a = Math.Sin(dLat / 2) * Math.Sin(dLat / 2) +
+                       Math.Cos(ucusPlani.OriginLat.Value * Math.PI / 180) *
+                       Math.Cos(ucusPlani.DestinationLat.Value * Math.PI / 180) *
+                       Math.Sin(dLon / 2) * Math.Sin(dLon / 2);
+
+            double c = 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1 - a));
+            double distanceKm = R * c;
+
+            double averageSpeedKmH = 850; // Ortalama jet hızı (km/s)
+            double hours = distanceKm / averageSpeedKmH;
+
+            ucusPlani.EndTimeUtc = ucusPlani.StartTimeUtc.AddHours(hours);
+        }
+
 
         _context.UcusPlanlari.Add(ucusPlani); //Veriyi eklemeye hazırla (henüz eklemiyor bellekte bekliyor!)
 
